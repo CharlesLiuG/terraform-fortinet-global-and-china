@@ -1,0 +1,136 @@
+locals {
+  nameSgFgtPublic     = "sg_fgt_public"
+  nameSgFgtPrivate    = "sg_fgt_private"
+  nameSgFgtIPsec      = "sg_fgt_ipsec"
+  nameSgFgtDnatWebSrv = "sg_fgt_dnat_websrv"
+}
+
+#################### Security Group of FortiGate Public Interface [port1 & port4] ####################
+resource "aws_security_group" "sgFgtPublic" {
+  name        = local.nameSgFgtPublic
+  description = "FortiGate public facing security group"
+  vpc_id      = var.isProvisionVpcNgfw == true ? aws_vpc.vpcNgfw[0].id : var.paramVpcCustomerId
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = -1
+    to_port     = -1
+    protocol    = "icmp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "ping"
+  }
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = ""
+  }
+
+  ingress {
+    description = "FGTHTTPS"
+    from_port   = var.portFgtHttps
+    to_port     = var.portFgtHttps
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name      = local.nameSgFgtPublic
+    Terraform = true
+    Project   = var.ProjectName
+  }
+}
+
+
+
+resource "aws_security_group" "sgFgtIPsec" {
+  count = var.isProvisionIPsec == true ? 1 : 0
+
+  name        = local.nameSgFgtIPsec
+  description = "FortiGate IPsec"
+  vpc_id      = var.isProvisionVpcNgfw == true ? aws_vpc.vpcNgfw[0].id : var.paramVpcCustomerId
+
+  ingress {
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "VPN-IKE"
+    from_port   = 500
+    to_port     = 500
+    protocol    = "udp"
+  }
+
+  ingress {
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "VPN-NATT"
+    from_port   = 4500
+    to_port     = 4500
+    protocol    = "udp"
+  }
+
+  tags = {
+    Name      = local.nameSgFgtIPsec
+    Terraform = true
+    Project   = var.ProjectName
+  }
+}
+
+
+
+resource "aws_security_group" "sgFgtDnatWebSrv" {
+  count = var.isProvisionDnatWebSrv == true ? 1 : 0
+
+  name        = local.nameSgFgtDnatWebSrv
+  description = "FortiGate DNAT Web Srv"
+  vpc_id      = var.isProvisionVpcNgfw == true ? aws_vpc.vpcNgfw[0].id : var.paramVpcCustomerId
+
+  ingress {
+    description = "FGTVIP"
+    from_port   = var.portFgtDnatWebsrvExt
+    to_port     = var.portFgtDnatWebsrvExt
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name      = local.nameSgFgtDnatWebSrv
+    Terraform = true
+    Project   = var.ProjectName
+  }
+}
+
+
+
+
+#################### Security Group of FortiGate Private & HAsync Interface [port2 & port3] ####################
+resource "aws_security_group" "sgFgtPrivate" {
+  name        = local.nameSgFgtPrivate
+  description = "FortiGate Private & HAsync security group"
+  vpc_id      = var.isProvisionVpcNgfw == true ? aws_vpc.vpcNgfw[0].id : var.paramVpcCustomerId
+
+  ingress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name      = local.nameSgFgtPrivate
+    Terraform = true
+    Project   = var.ProjectName
+  }
+}
