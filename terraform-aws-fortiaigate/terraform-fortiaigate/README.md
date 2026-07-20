@@ -76,7 +76,7 @@ cp terraform.tfvars.example terraform.tfvars
 
 ```bash
 ls charts/files/licenses/
-# FAIGCNSD26000582.lic  FAIGCNSD26000584.lic
+# FAIGCxxxxxxxx.lic  FAIGxxxxxxx.lic
 ```
 
 3. Deploy (two-phase for new clusters):
