@@ -381,6 +381,36 @@ postgresql:
       tag: 12-debian-12-r50
 
   primary:
+    # Fix: Change fsGroupChangePolicy to OnRootMismatch to avoid recursive chown on NAS
+    # which causes extremely slow startup or hangs on NFS-based storage
+    podSecurityContext:
+      enabled: true
+      fsGroup: 1001
+      fsGroupChangePolicy: "OnRootMismatch"
+    # Fix: Add initContainer to clean stale postmaster.pid on NAS before PostgreSQL starts
+    # This prevents CrashLoopBackOff caused by leftover lock files after non-graceful termination
+    initContainers:
+      - name: clean-stale-pid
+        image: lg-acr-registry-vpc.cn-wulanchabu.cr.aliyuncs.com/lg-ecr/os-shell:12-debian-12-r50
+        imagePullPolicy: IfNotPresent
+        command:
+          - /bin/sh
+          - -ec
+          - |
+            PID_FILE="/bitnami/postgresql/data/postmaster.pid"
+            if [ -f "$PID_FILE" ]; then
+              echo "WARNING: Found stale postmaster.pid, removing..."
+              rm -f "$PID_FILE"
+              echo "Stale PID file removed."
+            else
+              echo "No stale PID file found, proceeding."
+            fi
+        volumeMounts:
+          - name: data
+            mountPath: /bitnami/postgresql
+    # Fix: Increase terminationGracePeriodSeconds to allow PostgreSQL to shut down cleanly
+    # and avoid leaving stale lock files on NAS
+    terminationGracePeriodSeconds: 60
     persistence:
       enabled: true
       size: 16Gi
@@ -427,6 +457,37 @@ redis:
     authClients: false
 
   master:
+    # Fix: Change fsGroupChangePolicy to OnRootMismatch to avoid recursive chown on NAS
+    podSecurityContext:
+      enabled: true
+      fsGroup: 1001
+      fsGroupChangePolicy: "OnRootMismatch"
+    # Fix: Add initContainer to clean stale Redis lock files on NAS
+    # Redis AOF rewrite or dump.rdb.tmp files can prevent clean startup
+    initContainers:
+      - name: clean-stale-locks
+        image: lg-acr-registry-vpc.cn-wulanchabu.cr.aliyuncs.com/lg-ecr/os-shell:12-debian-12-r50
+        imagePullPolicy: IfNotPresent
+        command:
+          - /bin/sh
+          - -ec
+          - |
+            REDIS_DATA="/bitnami/redis/data"
+            # Remove stale temp files that prevent Redis from starting
+            if [ -f "$REDIS_DATA/temp-rewriteaof-bg-*.aof" ] 2>/dev/null; then
+              echo "WARNING: Found stale AOF rewrite temp files, removing..."
+              rm -f "$REDIS_DATA"/temp-rewriteaof-bg-*.aof
+            fi
+            if [ -f "$REDIS_DATA/temp-*.rdb" ] 2>/dev/null; then
+              echo "WARNING: Found stale RDB temp files, removing..."
+              rm -f "$REDIS_DATA"/temp-*.rdb
+            fi
+            echo "Redis data directory cleanup complete."
+        volumeMounts:
+          - name: redis-data
+            mountPath: /bitnami/redis/data
+    # Fix: Increase terminationGracePeriodSeconds for clean shutdown
+    terminationGracePeriodSeconds: 60
     persistence:
       enabled: true
       size: 4Gi

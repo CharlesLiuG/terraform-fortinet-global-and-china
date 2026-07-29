@@ -113,16 +113,12 @@ terraform plan --out=tfplan.out
 terraform apply tfplan.out
 ```
 
-> **注意**: 如果 postgresql/redis 出现 `ErrImagePull`，可能是 ACR credential helper 尚未完成注入。
-> 手动修复：
+> **注意**: 首次部署时如果 postgresql/redis Pod 一直 Pending 或 CrashLoopBackOff（镜像拉取失败），
+> 是因为 ACR credential helper 尚未完成密钥注入。直接删除 Pod 让其重建即可：
 > ```bash
-> # 查看已注入的 ACR secret
-> kubectl get secrets -n fortiaigate | grep acr
-> # patch ServiceAccount（用实际 secret 名替换）
-> kubectl patch sa fortiaigate-postgresql -n fortiaigate -p '{"imagePullSecrets": [{"name": "<acr-secret-name>"}]}'
-> kubectl patch sa fortiaigate-redis-master -n fortiaigate -p '{"imagePullSecrets": [{"name": "<acr-secret-name>"}]}'
-> kubectl delete pod fortiaigate-postgresql-0 fortiaigate-redis-master-0 -n fortiaigate
+> kubectl delete pod fortiaigate-postgresql-xxxxx fortiaigate-redis-master-xxxxx -n fortiaigate
 > ```
+> 重建时密钥已注入，Pod 会自动拉取镜像并正常启动。
 
 ### 场景 2: 已有 ACK + 已有 NAS
 
@@ -224,6 +220,33 @@ kubectl exec -n fortiaigate <pod-name> -- curl -s --connect-timeout 5 https://su
 ## License 绑定
 
 `charts/files/licenses/*.lic` 文件会按字母排序与 GPU 节点 1:1 绑定。GPU 节点通过 ECS tag `ack.aliyun.com` 自动发现，节点名格式为 `region_id.private_ip`。
+
+### 扩展 GPU 节点时自动激活 License
+
+扩展节点后，Terraform 会自动发现新节点并从 `charts/files/licenses/` 中分配 license。操作步骤：
+
+```bash
+# 1. 扩容节点池（例如从 1 扩到 2）
+aliyun cs ModifyClusterNodePool \
+  --ClusterId <cluster_id> \
+  --NodepoolId <nodepool_id> \
+  --body '{"scaling_group":{"desired_size":2}}'
+
+# 2. 等待新节点 Ready
+kubectl get nodes -l nvidia.com/gpu.present=true --watch
+
+# 3. 执行 terraform apply，自动绑定 license 到新节点
+cd ~/ALI-terraform-fortiaigate
+terraform apply
+
+# 4. 扩展 Triton 副本数
+kubectl scale deploy triton-server -n fortiaigate --replicas=2
+```
+
+> **注意事项**：
+> - `charts/files/licenses/` 目录下的 `.lic` 文件数量必须 >= GPU 节点数，否则多出的节点无法分配 license
+> - 新节点加入后必须执行 `terraform apply` 才能完成 license 绑定，不会全自动触发
+> - License 按文件名字母排序与节点（按 IP 排序）一一对应，新增节点可能导致已有节点的 license 重新分配
 
 ## 清理
 
