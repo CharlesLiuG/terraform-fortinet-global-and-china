@@ -130,6 +130,9 @@ scanners:
     # NOTE: System hard limit is 1,500,000 characters. Values above this
     # will be automatically capped at the maximum.
     maxScanChars: "5000"
+    # Maximum RPC concurrency per scanner instance to Triton.
+    # Controls how many inference requests each scanner can send in parallel.
+    maxRpcConcurrency: "20"
 
   # Default resource requests and limits for all scanners
   defaultResources:

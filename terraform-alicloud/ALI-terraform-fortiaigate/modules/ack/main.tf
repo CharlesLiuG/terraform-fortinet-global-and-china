@@ -146,6 +146,13 @@ resource "alicloud_cr_vpc_endpoint_linked_vpc" "acr" {
   vswitch_id  = alicloud_vswitch.node[count.index].id
   module_name = "Registry"
 
+  enable_create_dns_record_in_pvzt = true
+
+  timeouts {
+    create = "10m"
+    delete = "10m"
+  }
+
   depends_on = [alicloud_cs_managed_kubernetes.this]
 }
 

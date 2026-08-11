@@ -8,7 +8,7 @@ certificate_id         = "21499736-cn-hangzhou"
 gpu_instance_type      = "ecs.gn7i-c16g1.4xlarge"
 gpu_node_pool_desired  = 1
 region                 = "cn-wulanchabu"
-cluster_version        = "1.35.2-aliyun.1"
+cluster_version        = "1.35.7-aliyun.1"
 vpc_cidr               = "172.16.0.0/16"
 
 # ═══════════════════════════════════════════════════════════════════════════════

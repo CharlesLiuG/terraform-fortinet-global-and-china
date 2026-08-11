@@ -190,7 +190,7 @@ data:
 
     dynamic_batching {
       preferred_batch_size: [ 8, 16 ]
-      max_queue_delay_microseconds: 2000
+      max_queue_delay_microseconds: 500
     }
 
     # Auto-detects hardware with fallback: TensorRT → CUDA → CPU
@@ -272,7 +272,7 @@ data:
 
     dynamic_batching {
       preferred_batch_size: [ 8, 16 ]
-      max_queue_delay_microseconds: 2000
+      max_queue_delay_microseconds: 500
     }
 
     optimization {
@@ -353,7 +353,7 @@ data:
 
     dynamic_batching {
       preferred_batch_size: [ 8, 16 ]
-      max_queue_delay_microseconds: 2000
+      max_queue_delay_microseconds: 500
     }
 
     optimization {
@@ -455,7 +455,7 @@ data:
 
     dynamic_batching {
       preferred_batch_size: [ 8, 16 ]
-      max_queue_delay_microseconds: 2000
+      max_queue_delay_microseconds: 500
     }
 
 

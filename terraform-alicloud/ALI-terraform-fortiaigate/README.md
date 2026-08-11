@@ -113,13 +113,6 @@ terraform plan --out=tfplan.out
 terraform apply tfplan.out
 ```
 
-> **注意**: 首次部署时如果 postgresql/redis Pod 一直 Pending 或 CrashLoopBackOff（镜像拉取失败），
-> 是因为 ACR credential helper 尚未完成密钥注入。直接删除 Pod 让其重建即可：
-> ```bash
-> kubectl delete pod fortiaigate-postgresql-xxxxx fortiaigate-redis-master-xxxxx -n fortiaigate
-> ```
-> 重建时密钥已注入，Pod 会自动拉取镜像并正常启动。
-
 ### 场景 2: 已有 ACK + 已有 NAS
 
 ```hcl

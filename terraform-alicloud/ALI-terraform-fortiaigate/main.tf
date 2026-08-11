@@ -60,7 +60,7 @@ locals {
   nas_id           = var.create_nas ? module.nas[0].nas_id : var.nas_id
   nas_mount_target = var.create_nas ? module.nas[0].mount_target_domain : var.nas_mount_target
   # ALB 所需的 VSwitch IDs（至少 2 个不同可用区）
-  alb_vswitch_ids  = var.create_ack ? module.ack[0].vswitch_ids : [for vs in data.alicloud_vswitches.cluster[0].vswitches : vs.id]
+  alb_vswitch_ids = var.create_ack ? module.ack[0].vswitch_ids : [for vs in data.alicloud_vswitches.cluster[0].vswitches : vs.id]
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -76,6 +76,7 @@ data "alicloud_instances" "gpu_nodes" {
 
 # ─────────────────────────────────────────────────────────────────────────────
 # License 文件与 GPU 节点绑定
+# 自动扫描 charts/files/licenses/*.lic 并与发现的 GPU 节点按序绑定
 # ─────────────────────────────────────────────────────────────────────────────
 locals {
   license_dir   = "${path.module}/charts/files/licenses"
@@ -85,7 +86,12 @@ locals {
     for inst in try(data.alicloud_instances.gpu_nodes[0].instances, []) : "${inst.region_id}.${inst.private_ip}"
   ]) : []
 
-  gpu_node_names = length(local._auto_gpu_nodes) > 0 ? local._auto_gpu_nodes : (var.gpu_node_name != "" ? [var.gpu_node_name] : [])
+  # 优先使用手动指定的 gpu_node_name（保证关机重启等场景可强制指定）
+  # 其次使用自动发现的节点列表
+  gpu_node_names = (
+    var.gpu_node_name != "" ? [var.gpu_node_name] :
+    local._auto_gpu_nodes
+  )
 
   node_license_map = {
     for i, node in local.gpu_node_names :
@@ -93,7 +99,32 @@ locals {
     if i < length(local.license_files)
   }
 
-  gpu_node_name = var.gpu_node_name != "" ? var.gpu_node_name : (length(local.gpu_node_names) > 0 ? local.gpu_node_names[0] : "")
+  gpu_node_name = length(local.gpu_node_names) > 0 ? local.gpu_node_names[0] : ""
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# License 部署前置检查
+# 确保不会静默部署一个没有 license 的集群
+# ─────────────────────────────────────────────────────────────────────────────
+resource "terraform_data" "validate_licenses" {
+  count = var.deploy_app ? 1 : 0
+
+  lifecycle {
+    precondition {
+      condition     = length(local.license_files) > 0
+      error_message = "ERROR: No .lic files found in ${local.license_dir}. Please add license files before deploying."
+    }
+
+    precondition {
+      condition     = length(local.node_license_map) > 0
+      error_message = "ERROR: No GPU nodes discovered (auto-detect returned empty) and gpu_node_name is not set. Either wait for GPU nodes to reach Running state, or set gpu_node_name in terraform.tfvars."
+    }
+
+    precondition {
+      condition     = length(local.license_files) >= length(local.gpu_node_names)
+      error_message = "ERROR: Not enough license files (${length(local.license_files)}) for GPU nodes (${length(local.gpu_node_names)}). Add more .lic files to ${local.license_dir}."
+    }
+  }
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -128,17 +159,60 @@ resource "null_resource" "acr_credential_config" {
       echo "Waiting for acr-credential-helper to be ready..."
       kubectl rollout status deployment/aliyun-acr-credential-helper -n kube-system --timeout=120s 2>/dev/null || true
 
-      # 等待 helper 为目标 namespace 注入 imagePullSecret（最多等待 90 秒）
+      # 预先创建 PostgreSQL 和 Redis 的 ServiceAccount（Helm 部署时会 adopt 已存在的 SA）
+      # 这样 credential-helper 有时间在 Helm 部署前就注入 imagePullSecret
+      # 添加 Helm 管理标签，确保 Helm 能正确 adopt 这些 SA
+      echo "Pre-creating ServiceAccounts for PostgreSQL and Redis..."
+      cat <<EOF | kubectl apply -f - 2>/dev/null || true
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ${var.helm_release_name}-postgresql
+  namespace: ${var.namespace}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    meta.helm.sh/release-name: ${var.helm_release_name}
+    meta.helm.sh/release-namespace: ${var.namespace}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ${var.helm_release_name}-redis-master
+  namespace: ${var.namespace}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    meta.helm.sh/release-name: ${var.helm_release_name}
+    meta.helm.sh/release-namespace: ${var.namespace}
+EOF
+
+      # 等待 helper 为所有 SA 注入 imagePullSecret（default + postgresql + redis）
       echo "Waiting for imagePullSecret injection in namespace ${var.namespace}..."
-      for i in $(seq 1 18); do
-        SECRETS=$(kubectl get sa default -n ${var.namespace} -o jsonpath='{.imagePullSecrets[*].name}' 2>/dev/null)
-        if [ -n "$SECRETS" ]; then
-          echo "imagePullSecret injected: $SECRETS"
+      ALL_INJECTED=false
+      for i in $(seq 1 30); do
+        SEC_DEFAULT=$(kubectl get sa default -n ${var.namespace} -o jsonpath='{.imagePullSecrets[*].name}' 2>/dev/null)
+        SEC_PG=$(kubectl get sa ${var.helm_release_name}-postgresql -n ${var.namespace} -o jsonpath='{.imagePullSecrets[*].name}' 2>/dev/null)
+        SEC_REDIS=$(kubectl get sa ${var.helm_release_name}-redis-master -n ${var.namespace} -o jsonpath='{.imagePullSecrets[*].name}' 2>/dev/null)
+
+        if [ -n "$SEC_DEFAULT" ] && [ -n "$SEC_PG" ] && [ -n "$SEC_REDIS" ]; then
+          echo "All ServiceAccounts have imagePullSecrets injected:"
+          echo "  default: $SEC_DEFAULT"
+          echo "  ${var.helm_release_name}-postgresql: $SEC_PG"
+          echo "  ${var.helm_release_name}-redis-master: $SEC_REDIS"
+          ALL_INJECTED=true
           break
         fi
-        echo "  attempt $i/18 - not yet injected, waiting 5s..."
+        echo "  attempt $i/30 - waiting for injection (default=$SEC_DEFAULT, pg=$SEC_PG, redis=$SEC_REDIS)..."
         sleep 5
       done
+
+      if [ "$ALL_INJECTED" != "true" ]; then
+        echo "WARNING: Not all ServiceAccounts got imagePullSecrets after 150s. Proceeding anyway..."
+        echo "  default: $SEC_DEFAULT"
+        echo "  ${var.helm_release_name}-postgresql: $SEC_PG"
+        echo "  ${var.helm_release_name}-redis-master: $SEC_REDIS"
+      fi
     EOT
   }
 
@@ -266,5 +340,6 @@ resource "helm_release" "fortiaigate" {
     kubernetes_storage_class.nas_sc_db,
     helm_release.nvidia_device_plugin,
     null_resource.acr_credential_config,
+    terraform_data.validate_licenses,
   ]
 }
